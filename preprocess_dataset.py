@@ -34,7 +34,7 @@ def preprocess_swag(context, dataset, is_test = False):
         result["id"] = data["id"]
         result["sent1"] = ""    # I don't know what to put
         result["sent2"] = data["question"]
-        for i, para_id in data["paragraphs"]:
+        for i, para_id in enumerate(data["paragraphs"]):
             result[f"ending{i}"] = context[para_id]
         if not is_test:
             result["label"] = data["paragraphs"].index(data["relevant"])
