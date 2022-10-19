@@ -75,17 +75,17 @@ def preprocess_squad(context, dataset, is_test = False):
     return results
 
 def main(args):
-    with open(args.input_data_dir / 'context.json', 'r') as fin:
+    with open(args.input_data_dir / 'context.json', 'r', encoding='utf-8') as fin:
         context = json.load(fin)
     
     for dataset_name in ['train', 'valid', 'test']:
-        with open(args.input_data_dir / f'{dataset_name}.json', 'r') as fin:
+        with open(args.input_data_dir / f'{dataset_name}.json', 'r', encoding='utf-8') as fin:
             dataset = json.load(fin)
         is_test = (dataset_name == 'test')
-        with open(args.output_data_dir / f'swag_{dataset_name}.json', 'w') as fout:
-            json.dump(preprocess_swag(context, dataset, is_test), fout)
-        with open(args.output_data_dir / f'squad_{dataset_name}.json', 'w') as fout:
-            json.dump(preprocess_swag(context, dataset, is_test), fout)
+        with open(args.output_data_dir / f'swag_{dataset_name}.json', 'w', encoding='utf-8') as fout:
+            json.dump(preprocess_swag(context, dataset, is_test), fout, ensure_ascii=False)
+        with open(args.output_data_dir / f'squad_{dataset_name}.json', 'w', encoding='utf-8') as fout:
+            json.dump(preprocess_swag(context, dataset, is_test), fout, ensure_ascii=False)
     
     return
 
