@@ -78,7 +78,7 @@ def main(args):
     with open(args.input_data_dir / 'context.json', 'r') as fin:
         context = json.load(fin)
     
-    for dataset_name in ['train', 'val', 'test']:
+    for dataset_name in ['train', 'valid', 'test']:
         with open(args.input_data_dir / f'{dataset_name}.json', 'r') as fin:
             dataset = json.load(fin)
         is_test = (dataset_name == 'test')
