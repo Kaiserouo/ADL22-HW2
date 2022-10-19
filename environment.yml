@@ -1,0 +1,13 @@
+name: adl-hw2
+channels:
+  - defaults
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.9
+  - cudatoolkit=11.6
+  - cudnn=8.2.1
+  - pip
+  - pytorch::pytorch
+  - pip:
+      - pip-tools
