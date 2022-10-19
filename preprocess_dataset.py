@@ -5,10 +5,16 @@ from pathlib import Path
 def parse_args():
     parser = argparse.ArgumentParser(description="Finetune a transformers model on a multiple choice task")
     parser.add_argument(
-        "--data_dir",
+        "--input_data_dir",
         type=Path,
         default='./data',
         help="The directory of dataset.",
+    )
+    parser.add_argument(
+        "--output_data_dir",
+        type=Path,
+        default='./data',
+        help="The directory of output dataset.",
     )
 
     args = parser.parse_args()
@@ -22,7 +28,20 @@ def preprocess_swag(context, dataset, is_test = False):
     question_header_name = "sent2"
     label_column_name = "label" if "label" in column_names else "labels"
     """
+    results = []
+    for data in dataset:
+        result = dict()
+        result["id"] = data["id"]
+        result["sent1"] = ""    # I don't know what to put
+        result["sent2"] = data["question"]
+        for i, para_id in data["paragraphs"]:
+            result[f"ending{i}"] = context[para_id]
+        if not is_test:
+            result["label"] = data["paragraphs"].index(data["relevant"])
 
+        results.append(result)
+    
+    return results
 
 def preprocess_squad(context, dataset, is_test = False):
     """
@@ -56,21 +75,19 @@ def preprocess_squad(context, dataset, is_test = False):
     return results
 
 def main(args):
-    with open(args.data_dir / 'context.json', 'r') as fin:
+    with open(args.input_data_dir / 'context.json', 'r') as fin:
         context = json.load(fin)
     
     for dataset_name in ['train', 'val', 'test']:
-        with open(args.data_dir / f'{dataset_name}.json', 'r') as fin:
+        with open(args.input_data_dir / f'{dataset_name}.json', 'r') as fin:
             dataset = json.load(fin)
         is_test = (dataset_name == 'test')
-        with open(args.data_dir / f'swag_{dataset_name}.json', 'w') as fout:
+        with open(args.output_data_dir / f'swag_{dataset_name}.json', 'w') as fout:
             json.dump(preprocess_swag(context, dataset, is_test), fout)
-        with open(args.data_dir / f'squad_{dataset_name}.json', 'w') as fout:
+        with open(args.output_data_dir / f'squad_{dataset_name}.json', 'w') as fout:
             json.dump(preprocess_swag(context, dataset, is_test), fout)
     
     return
-
-    
 
 if __name__ == '__main__':
     main()
