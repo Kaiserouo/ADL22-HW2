@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Finetune a transformers model on a multiple choice task")
+    parser = argparse.ArgumentParser(description="Preprocess given dataset into swag and squad version.")
     parser.add_argument(
         "--input_data_dir",
         type=Path,
@@ -38,13 +38,17 @@ def preprocess_swag(context, dataset, is_test = False):
             result[f"ending{i}"] = context[para_id]
         if not is_test:
             result["label"] = data["paragraphs"].index(data["relevant"])
+        else:
+            result["label"] = 0     # must have something in there, won't be used though
 
         results.append(result)
     
     return results
 
-def preprocess_squad(context, dataset, is_test = False):
+def preprocess_squad(context, dataset):
     """
+    WON'T PROCESS TEST
+
     e.g. 
     {
         "answers": {
@@ -63,18 +67,17 @@ def preprocess_squad(context, dataset, is_test = False):
         result["id"] = data["id"]
         result["question"] = data["question"]
         result["title"] = ""
-        if not is_test:
-            result["answers"] = {
-                "answer_start": [data["answer"]["start"]],
-                "text": [data["answer"]["text"]]
-            }
-            result["context"] = context[data["relevant"]]
+        result["answers"] = {
+            "answer_start": [data["answer"]["start"]],
+            "text": [data["answer"]["text"]]
+        }
+        result["context"] = context[data["relevant"]]
 
         results.append(result)
     
     return results
 
-def dumpJson(data_ls, fout):
+def dumpJsonline(data_ls, fout):
     for data in data_ls:
         json.dump(data, fout, ensure_ascii=False)
         fout.write('\n')
@@ -87,10 +90,13 @@ def main(args):
         with open(args.input_data_dir / f'{dataset_name}.json', 'r', encoding='utf-8') as fin:
             dataset = json.load(fin)
         is_test = (dataset_name == 'test')
+
         with open(args.output_data_dir / f'swag_{dataset_name}.json', 'w', encoding='utf-8') as fout:
-            dumpJson(preprocess_swag(context, dataset, is_test), fout)
-        with open(args.output_data_dir / f'squad_{dataset_name}.json', 'w', encoding='utf-8') as fout:
-            dumpJson(preprocess_squad(context, dataset, is_test), fout)
+            dumpJsonline(preprocess_swag(context, dataset, is_test), fout)
+        
+        if not is_test:
+            with open(args.output_data_dir / f'squad_{dataset_name}.json', 'w', encoding='utf-8') as fout:
+                dumpJsonline(preprocess_squad(context, dataset), fout)
     
     return
 

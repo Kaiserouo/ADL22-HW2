@@ -18,6 +18,13 @@ Fine-tuning a 🤗 Transformers model on multiple choice relying on the accelera
 """
 # You can also adapt this script on your own multiple choice task. Pointers for this are left as comments.
 
+"""
+For training, do what huggingface originally tells you to do
+
+For testing, still give train_file and test_file, but set test_file and test_output_file,
+num_train_epochs = 0, and do NOT set --with_tracking and --output_dir
+"""
+
 import argparse
 import json
 import logging
@@ -27,6 +34,7 @@ import random
 from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
+import time
 from typing import Optional, Union
 
 import datasets
@@ -85,6 +93,12 @@ def parse_args():
         "--validation_file", type=str, default=None, help="A csv or a json file containing the validation data."
     )
     parser.add_argument(
+        "--test_file", type=str, default=None, help="A csv or a json file containing the testing data."
+    )
+    parser.add_argument(
+        "--test_output_file", type=str, default=None, help="Output of prediction result."
+    )
+    parser.add_argument(
         "--max_length",
         type=int,
         default=128,
@@ -131,7 +145,7 @@ def parse_args():
         "--per_device_eval_batch_size",
         type=int,
         default=8,
-        help="Batch size (per device) for the evaluation dataloader.",
+        help="Batch size (per device) for the evaluation dataloader. The same as testing",
     )
     parser.add_argument(
         "--learning_rate",
@@ -211,8 +225,11 @@ def parse_args():
     )
     args = parser.parse_args()
 
+    # sanity check
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
+    
+    assert (args.test_file is None) == (args.test_output_file is None), "Must specify both or neither test file (output) path."
 
     return args
 
@@ -279,7 +296,7 @@ def main():
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_swag_no_trainer", args)
+    # send_example_telemetry("run_swag_no_trainer", args)
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
@@ -346,6 +363,8 @@ def main():
             data_files["train"] = args.train_file
         if args.validation_file is not None:
             data_files["validation"] = args.validation_file
+        if args.test_file is not None:
+            data_files["test"] = args.test_file
         extension = args.train_file.split(".")[-1]
         raw_datasets = load_dataset(extension, data_files=data_files)
     # Trim a number of training examples
@@ -357,8 +376,10 @@ def main():
 
     if raw_datasets["train"] is not None:
         column_names = raw_datasets["train"].column_names
-    else:
+    elif raw_datasets["validation"] is not None:
         column_names = raw_datasets["validation"].column_names
+    else:
+        column_names = raw_datasets["test"].column_names
 
     # When using your own dataset or a different dataset from swag, you will probably need to change this.
     ending_names = [f"ending{i}" for i in range(4)]
@@ -371,7 +392,7 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     if args.config_name:
-        config = AutoConfig.from_pretrained(args.model_name_or_path)
+        config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
         config = AutoConfig.from_pretrained(args.model_name_or_path)
     else:
@@ -640,6 +661,22 @@ def main():
     if args.with_tracking:
         accelerator.end_training()
 
+    if args.test_file is not None:
+        test_dataset = processed_datasets["test"]
+        test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
+        test_dataloader = accelerator.prepare(test_dataloader)
+        model.eval()
+        with open(args.test_output_file, 'w') as fout:
+            for step, batch in tqdm(enumerate(test_dataloader), disable=not accelerator.is_local_main_process):
+                with torch.no_grad():
+                    outputs = model(**batch)
+                predictions = outputs.logits.argmax(dim=-1).to('cpu')
+                for pred in predictions:
+                    json.dump({
+                        "pred": pred.item()
+                    }, fout)
+                    fout.write('\n')
+            
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)

@@ -197,6 +197,7 @@ def parse_args():
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+    parser.add_argument("--test_output_dir", type=str, default=None, help="Where to store predictino of test output.")
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
         "--doc_stride",
@@ -678,7 +679,10 @@ def main():
         )
 
     # Post-processing:
-    def post_processing_function(examples, features, predictions, stage="eval"):
+    def post_processing_function(examples, features, predictions, stage="eval", output_dir=None):
+        if output_dir is None:
+            output_dir = args.output_dir
+
         # Post-processing: we match the start logits and end logits to answers in the original context.
         predictions = postprocess_qa_predictions(
             examples=examples,
@@ -688,7 +692,7 @@ def main():
             n_best_size=args.n_best_size,
             max_answer_length=args.max_answer_length,
             null_score_diff_threshold=args.null_score_diff_threshold,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             prefix=stage,
         )
         # Format the result to the format the metric expects.
@@ -770,6 +774,9 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
+
+    if args.do_predict:
+        predict_dataloader = accelerator.prepare(predict_dataloader)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -957,7 +964,7 @@ def main():
         del all_end_logits
 
         outputs_numpy = (start_logits_concat, end_logits_concat)
-        prediction = post_processing_function(predict_examples, predict_dataset, outputs_numpy)
+        prediction = post_processing_function(predict_examples, predict_dataset, outputs_numpy, output_dir=args.test_output_dir)
         predict_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
         logger.info(f"Predict metrics: {predict_metric}")
 
@@ -968,8 +975,8 @@ def main():
             "epoch": epoch,
             "step": completed_steps,
         }
-    if args.do_predict:
-        log["squad_v2_predict" if args.version_2_with_negative else "squad_predict"] = predict_metric
+        if args.do_predict:
+            log["squad_v2_predict" if args.version_2_with_negative else "squad_predict"] = predict_metric
 
         accelerator.log(log, step=completed_steps)
 
