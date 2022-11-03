@@ -99,6 +99,10 @@ def parse_args():
         "--test_output_file", type=str, default=None, help="Output of prediction result."
     )
     parser.add_argument(
+        "--no_metric", action="store_true",
+        help="Don't use metric. For no internet"
+    )
+    parser.add_argument(
         "--max_length",
         type=int,
         default=128,
@@ -201,6 +205,12 @@ def parse_args():
         type=str,
         default=None,
         help="Whether the various states should be saved at the end of every n steps, or 'epoch' for each epoch.",
+    )
+    parser.add_argument(
+        "--record_steps",
+        type=int,
+        default=1500,
+        help="How many (completed) steps per record metric.",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -539,7 +549,8 @@ def main():
         accelerator.init_trackers("swag_no_trainer", experiment_config)
 
     # Metrics
-    metric = evaluate.load("accuracy")
+    if not args.no_metric:
+        metric = evaluate.load("accuracy")
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -614,31 +625,32 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
+        
+        if not args.no_metric:
+            model.eval()
+            for step, batch in enumerate(eval_dataloader):
+                with torch.no_grad():
+                    outputs = model(**batch)
+                predictions = outputs.logits.argmax(dim=-1)
+                predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
+                metric.add_batch(
+                    predictions=predictions,
+                    references=references,
+                )
 
-        model.eval()
-        for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1)
-            predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-            metric.add_batch(
-                predictions=predictions,
-                references=references,
-            )
+            eval_metric = metric.compute()
+            accelerator.print(f"epoch {epoch}: {eval_metric}")
 
-        eval_metric = metric.compute()
-        accelerator.print(f"epoch {epoch}: {eval_metric}")
-
-        if args.with_tracking:
-            accelerator.log(
-                {
-                    "accuracy": eval_metric,
-                    "train_loss": total_loss.item() / len(train_dataloader),
-                    "epoch": epoch,
-                    "step": completed_steps,
-                },
-                step=completed_steps,
-            )
+            if args.with_tracking:
+                accelerator.log(
+                    {
+                        "accuracy": eval_metric,
+                        "train_loss": total_loss.item() / len(train_dataloader),
+                        "epoch": epoch,
+                        "step": completed_steps,
+                    },
+                    step=completed_steps,
+                )
 
         if args.push_to_hub and epoch < args.num_train_epochs - 1:
             accelerator.wait_for_everyone()
@@ -687,8 +699,9 @@ def main():
             tokenizer.save_pretrained(args.output_dir)
             if args.push_to_hub:
                 repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
-        with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-            json.dump({"eval_accuracy": eval_metric["accuracy"]}, f)
+        if not args.no_metric:
+            with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
+                json.dump({"eval_accuracy": eval_metric["accuracy"]}, f)
 
 
 if __name__ == "__main__":

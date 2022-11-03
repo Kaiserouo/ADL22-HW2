@@ -118,6 +118,10 @@ def parse_args():
         "--test_file", type=str, default=None, help="A csv or a json file containing the Prediction data."
     )
     parser.add_argument(
+        "--no_metric", action="store_true",
+        help="Don't use metric. For no internet."
+    )
+    parser.add_argument(
         "--max_seq_length",
         type=int,
         default=384,
@@ -281,6 +285,12 @@ def parse_args():
         help="Whether the various states should be saved at the end of every n steps, or 'epoch' for each epoch.",
     )
     parser.add_argument(
+        "--record_steps",
+        type=int,
+        default=None,
+        help="How many (completed) steps per record metric.",
+    )
+    parser.add_argument(
         "--resume_from_checkpoint",
         type=str,
         default=None,
@@ -333,7 +343,7 @@ def main():
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_qa_no_trainer", args)
+    # send_example_telemetry("run_qa_no_trainer", args)
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
@@ -706,7 +716,8 @@ def main():
         references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
         return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
-    metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
+    if not args.no_metric:
+        metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
 
     # Create and fill numpy array of size len_of_validation_data * max_length_of_output_tensor
     def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
@@ -814,6 +825,11 @@ def main():
     completed_steps = 0
     starting_epoch = 0
 
+    all_metric = {
+        "eval": None,
+        "steps": dict()
+    }
+
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":
@@ -839,6 +855,7 @@ def main():
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
+            record_total_loss = 0
             total_loss = 0
         for step, batch in enumerate(train_dataloader):
             # We need to skip steps until we reach the resumed step
@@ -853,6 +870,7 @@ def main():
                 # We keep track of the loss at each epoch
                 if args.with_tracking:
                     total_loss += loss.detach().float()
+                    record_total_loss += loss.detach().float().item()
 
                 accelerator.backward(loss)
                 optimizer.step()
@@ -863,6 +881,47 @@ def main():
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 completed_steps += 1
+
+                if not args.no_metric and args.record_steps is not None and completed_steps % args.record_steps == 0:
+                    # record evaluation metric
+                    all_start_logits = []
+                    all_end_logits = []
+
+                    model.eval()
+                    eval_loss = 0
+                    for step, batch in enumerate(eval_dataloader):
+                        with torch.no_grad():
+                            outputs = model(**batch)
+                            eval_loss += outputs.loss.detach().float().item()
+                            start_logits = outputs.start_logits
+                            end_logits = outputs.end_logits
+
+                            if not args.pad_to_max_length:  # necessary to pad predictions and labels for being gathered
+                                start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
+                                end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
+
+                            all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
+                            all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
+
+                    max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
+
+                    # concatenate the numpy array
+                    start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
+                    end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
+
+                    # delete the list of numpy arrays
+                    del all_start_logits
+                    del all_end_logits
+
+                    outputs_numpy = (start_logits_concat, end_logits_concat)
+                    prediction = post_processing_function(eval_examples, eval_dataset, outputs_numpy)
+                    eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
+                    eval_metric["train_loss"] = record_total_loss
+                    eval_metric["eval_loss"] = eval_loss
+                    logger.info(f"Step {completed_steps} metrics: {eval_metric}")
+                    all_metric["steps"][str(completed_steps)] = eval_metric
+                    record_total_loss = 0
+                    model.train()
 
             if isinstance(checkpointing_steps, int):
                 if completed_steps % checkpointing_steps == 0:
@@ -897,38 +956,38 @@ def main():
     logger.info(f"  Num examples = {len(eval_dataset)}")
     logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-    all_start_logits = []
-    all_end_logits = []
+    if not args.no_metric:
+        all_start_logits = []
+        all_end_logits = []
+        model.eval()
+        for step, batch in enumerate(eval_dataloader):
+            with torch.no_grad():
+                outputs = model(**batch)
+                start_logits = outputs.start_logits
+                end_logits = outputs.end_logits
 
-    model.eval()
+                if not args.pad_to_max_length:  # necessary to pad predictions and labels for being gathered
+                    start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
+                    end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
 
-    for step, batch in enumerate(eval_dataloader):
-        with torch.no_grad():
-            outputs = model(**batch)
-            start_logits = outputs.start_logits
-            end_logits = outputs.end_logits
+                all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
+                all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
 
-            if not args.pad_to_max_length:  # necessary to pad predictions and labels for being gathered
-                start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
-                end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
+        max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
 
-            all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
-            all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
+        # concatenate the numpy array
+        start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
+        end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
 
-    max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
+        # delete the list of numpy arrays
+        del all_start_logits
+        del all_end_logits
 
-    # concatenate the numpy array
-    start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
-    end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
-
-    # delete the list of numpy arrays
-    del all_start_logits
-    del all_end_logits
-
-    outputs_numpy = (start_logits_concat, end_logits_concat)
-    prediction = post_processing_function(eval_examples, eval_dataset, outputs_numpy)
-    eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
-    logger.info(f"Evaluation metrics: {eval_metric}")
+        outputs_numpy = (start_logits_concat, end_logits_concat)
+        prediction = post_processing_function(eval_examples, eval_dataset, outputs_numpy)
+        eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
+        logger.info(f"Evaluation metrics: {eval_metric}")
+        all_metric["eval"] = eval_metric
 
     # Prediction
     if args.do_predict:
@@ -965,8 +1024,6 @@ def main():
 
         outputs_numpy = (start_logits_concat, end_logits_concat)
         prediction = post_processing_function(predict_examples, predict_dataset, outputs_numpy, output_dir=args.test_output_dir)
-        predict_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
-        logger.info(f"Predict metrics: {predict_metric}")
 
     if args.with_tracking:
         log = {
@@ -991,8 +1048,8 @@ def main():
             if args.push_to_hub:
                 repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
 
-            logger.info(json.dumps(eval_metric, indent=4))
-            save_prefixed_metrics(eval_metric, args.output_dir)
+            logger.info(json.dumps(all_metric, indent=4))
+            save_prefixed_metrics(all_metric, args.output_dir, metric_key_prefix='metric')
 
 
 if __name__ == "__main__":
