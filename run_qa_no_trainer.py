@@ -888,11 +888,9 @@ def main():
                     all_end_logits = []
 
                     model.eval()
-                    eval_loss = 0
                     for step, batch in enumerate(eval_dataloader):
                         with torch.no_grad():
                             outputs = model(**batch)
-                            eval_loss += outputs.loss.detach().float().item()
                             start_logits = outputs.start_logits
                             end_logits = outputs.end_logits
 
@@ -917,7 +915,6 @@ def main():
                     prediction = post_processing_function(eval_examples, eval_dataset, outputs_numpy)
                     eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
                     eval_metric["train_loss"] = record_total_loss
-                    eval_metric["eval_loss"] = eval_loss
                     logger.info(f"Step {completed_steps} metrics: {eval_metric}")
                     all_metric["steps"][str(completed_steps)] = eval_metric
                     record_total_loss = 0

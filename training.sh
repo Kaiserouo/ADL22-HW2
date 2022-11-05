@@ -1,7 +1,7 @@
 DO_PREPROCESS_DATASET=0
 DO_TRAIN_SWAG=1
 # SWAG_LOAD_MODEL=1
-DO_TRAIN_QA=1
+DO_TRAIN_QA=0
 # QA_LOAD_MODEL=1
 
 echo '[*] Generating Directories'
@@ -24,7 +24,7 @@ cs_model_path='./output_model/swag/pytorch_model.bin'
 config_name='./output_model/swag/config.json'
 tokenizer_name='./output_model/swag/'
 
-model='hfl/chinese-macbert-base'
+model='hfl/chinese-roberta-wwm-ext'
 train_file='./data/preprocess_dataset/swag_train.json'
 valid_file='./data/preprocess_dataset/swag_valid.json'
 output_dir='./output_model/swag'
@@ -33,9 +33,9 @@ output_dir='./output_model/swag'
 max_len=512
 
 # hyperparameter setting
-lr=3e-5
+lr=1e-5
 weight_decay=0
-num_epoch=1
+num_epoch=3
 batch_size=1
 grad_acc_step=2   # effective batch size = batch_size * grad_acc_step
 
@@ -62,7 +62,7 @@ qa_model_path='./output_model/qa/pytorch_model.bin'
 config_name='./output_model/qa/config.json'
 tokenizer_name='./output_model/qa/'
 
-model='hfl/chinese-macbert-base'
+model='hfl/chinese-roberta-wwm-ext'
 train_file='./data/preprocess_dataset/squad_train.json'
 valid_file='./data/preprocess_dataset/squad_valid.json'
 output_dir='./output_model/qa'
@@ -71,9 +71,9 @@ output_dir='./output_model/qa'
 max_len=512
 
 # hyperparameter setting
-lr=3e-5
+lr=1e-5
 weight_decay=0
-num_epoch=1
+num_epoch=2
 batch_size=1
 grad_acc_step=2   # effective batch size = batch_size * grad_acc_step
 
