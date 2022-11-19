@@ -1,11 +1,5 @@
 # ADL-HW2
 
-## Todo
-+ Make download.sh
-+ Make new directories and fix all shell scripts for the change
-  + also python3.9
-+ Run WITHOUT INTERNET to ensure everything works
-
 ## Environment
 Environment setup procedure is almost the same as `adl-hw1`.
 Note that **my CUDA version is 11.6**, due to me having difficulty making my GPU run CUDA 10.2.
@@ -13,7 +7,7 @@ Note that **my CUDA version is 11.6**, due to me having difficulty making my GPU
 ## Training Procedure
 Refer to `training.sh` for training pipeline, and the python files for exact requirements for arguments.
 
-Given `./data` that contains all originally given json files:
+For directory specifications, please directly modify `training.sh`. All directory names are at the head of script.
 
 + Preprocess the train / valid files into SQuAD and SWAG format by `preprocess_dataset.py`.
 + Train the model by `run_swag_no_trainer.py` and `run_qa_no_trainer.py`.

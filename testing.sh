@@ -1,8 +1,24 @@
+DO_PREPROCESS_DATASET=1
 RUN_SWAG=1
 RUN_SWAG_POSTPROCESS=1
 RUN_QA=1
 RUN_QA_POSTPROCESS=1
 
+echo '[*] Generating Directories'
+mkdir -p ./data/preprocess_dataset
+
+# ---
+
+context_path='./data/context.json'
+test_path='./data/test.json'
+
+[[ DO_PREPROCESS_DATASET -eq '1' ]] && \
+    echo '[*] Executing preprocess_dataset' && \
+    python preprocess_dataset.py \
+        --only_process_test_file \
+        --context_path "${context_path}" \
+        --test_path "${test_path}" \
+        --output_data_dir ./data/preprocess_dataset
 # ---
 
 cs_model_path='./output_model/swag/pytorch_model.bin'
@@ -14,7 +30,7 @@ valid_file='./data/preprocess_dataset/swag_valid.json'
 test_file='./data/preprocess_dataset/swag_test.json'
 test_cs_output='./data/preprocess_dataset/test_cs_output.json'
 
-max_len=384
+max_len=512
 batch_size=1
 
 [[ RUN_SWAG -eq '1' ]] && \
@@ -40,7 +56,8 @@ test_squad_file='./data/preprocess_dataset/squad_test.json'
 [[ RUN_SWAG_POSTPROCESS -eq '1' ]] && \
     echo '[*] Executing postprocessing CS output' && \
     python process_cs_output.py \
-        --input_data_dir ${dataset_dir} \
+        --context_file "${dataset_dir}/context.json" \
+        --test_file "${dataset_dir}/test.json" \
         --input_cs_file ${test_cs_output} \
         --output_squad_file ${test_squad_file}
 
